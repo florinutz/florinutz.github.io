@@ -35,7 +35,7 @@ gem install jekyll bundler
 ```
 cd personal-website
 ```
-4. Install missing gems
+4. Install missing gems 
 ```
 bundle install
 ```
