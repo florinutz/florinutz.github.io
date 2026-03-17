@@ -1,3 +1,8 @@
+---
+layout: default
+title: Message Deduplication - A Complete Guide
+---
+
 # Message Deduplication: A Complete Guide
 
 ## Table of Contents
