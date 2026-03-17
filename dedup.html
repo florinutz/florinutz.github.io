@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Message Deduplication: A Complete Guide</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-card: #161b22;
+    --bg-code: #1c2128;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-dim: #1f6feb33;
+    --border: #30363d;
+    --green: #3fb950;
+    --orange: #d29922;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { font-size: 16px; scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 1rem;
+    max-width: 52rem;
+    margin: 0 auto;
+    -webkit-text-size-adjust: 100%;
+  }
+  h1 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    margin: 2rem 0 1rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  h2 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin: 2.5rem 0 0.8rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  h3 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin: 1.8rem 0 0.6rem;
+    color: var(--text);
+  }
+  p { margin: 0.6rem 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  strong { color: var(--text); font-weight: 600; }
+  em { color: var(--text-muted); }
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 2rem 0;
+  }
+  ul, ol {
+    padding-left: 1.5rem;
+    margin: 0.5rem 0;
+  }
+  li { margin: 0.25rem 0; }
+  /* Nested TOC */
+  ul ul { margin: 0.1rem 0; }
+
+  code {
+    font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+    font-size: 0.88em;
+    background: var(--bg-code);
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+    color: #f0883e;
+  }
+  pre {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    overflow-x: auto;
+    margin: 1rem 0;
+    line-height: 1.5;
+    -webkit-overflow-scrolling: touch;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    color: var(--text);
+    font-size: 0.85em;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+    font-size: 0.9rem;
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  thead { background: var(--bg-code); }
+  th {
+    text-align: left;
+    padding: 0.6rem 0.8rem;
+    border: 1px solid var(--border);
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  td {
+    padding: 0.5rem 0.8rem;
+    border: 1px solid var(--border);
+  }
+  tr:nth-child(even) { background: var(--bg-card); }
+
+  blockquote {
+    border-left: 3px solid var(--accent);
+    padding: 0.5rem 1rem;
+    margin: 1rem 0;
+    color: var(--text-muted);
+    background: var(--accent-dim);
+    border-radius: 0 6px 6px 0;
+  }
+
+  /* Mobile tweaks */
+  @media (max-width: 600px) {
+    body { padding: 0.75rem; font-size: 15px; }
+    h1 { font-size: 1.5rem; }
+    h2 { font-size: 1.25rem; }
+    h3 { font-size: 1.05rem; }
+    pre { padding: 0.75rem; font-size: 0.8em; }
+    table { font-size: 0.82rem; }
+    th, td { padding: 0.4rem 0.5rem; }
+  }
+
+  /* Back to top */
+  .top-link {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    text-decoration: none;
+    opacity: 0.8;
+    z-index: 100;
+  }
+  .top-link:hover { opacity: 1; text-decoration: none; }
+</style>
+</head>
+<body>
+<h1 id="message-deduplication-a-complete-guide">Message Deduplication: A Complete Guide</h1>
+<h2 id="table-of-contents">Table of Contents</h2>
+<ul>
+<li><a href="#1-why-duplicates-exist">1. Why Duplicates Exist</a></li>
+<li><a href="#11-the-fundamental-problem-at-least-once-delivery">1.1 The Fundamental Problem: At-Least-Once Delivery</a></li>
+<li><a href="#12-where-duplicates-are-born">1.2 Where Duplicates Are Born</a></li>
+<li><a href="#13-why-not-just-prevent-them">1.3 Why Not Just Prevent Them?</a></li>
+<li><a href="#2-what-deduplication-actually-is">2. What Deduplication Actually Is</a></li>
+<li><a href="#21-the-core-abstraction">2.1 The Core Abstraction</a></li>
+<li><a href="#22-identity-what-makes-a-message-the-same">2.2 Identity: What Makes a Message "The Same"?</a></li>
+<li><a href="#23-the-two-fundamental-modes">2.3 The Two Fundamental Modes</a></li>
+<li><a href="#3-data-structures-for-dedup-state">3. Data Structures for Dedup State</a></li>
+<li><a href="#31-hash-map-the-obvious-choice">3.1 Hash Map (The Obvious Choice)</a></li>
+<li><a href="#32-bloom-filters-probabilistic">3.2 Bloom Filters (Probabilistic)</a></li>
+<li><a href="#33-cuckoo-filters">3.3 Cuckoo Filters</a></li>
+<li><a href="#34-key-value-stores-with-ttl">3.4 Key-Value Stores with TTL</a></li>
+<li><a href="#35-sorted-sets--skip-lists">3.5 Sorted Sets / Skip Lists</a></li>
+<li><a href="#36-comparison-matrix">3.6 Comparison Matrix</a></li>
+<li><a href="#4-time-windowed-deduplication">4. Time-Windowed Deduplication</a></li>
+<li><a href="#41-why-not-just-dedup-forever">4.1 Why Not Just Dedup Forever?</a></li>
+<li><a href="#42-expiry-strategies">4.2 Expiry Strategies</a></li>
+<li><a href="#43-wall-clock-vs-event-time">4.3 Wall Clock vs Event Time</a></li>
+<li><a href="#44-the-edge-at-window-boundaries">4.4 The Edge at Window Boundaries</a></li>
+<li><a href="#5-the-trade-off-space">5. The Trade-Off Space</a></li>
+<li><a href="#51-memory-vs-accuracy">5.1 Memory vs Accuracy</a></li>
+<li><a href="#52-latency-vs-throughput">5.2 Latency vs Throughput</a></li>
+<li><a href="#53-exactness-vs-efficiency">5.3 Exactness vs Efficiency</a></li>
+<li><a href="#54-simplicity-vs-durability">5.4 Simplicity vs Durability</a></li>
+<li><a href="#55-the-cap-angle-distributed-systems">5.5 The CAP Angle (Distributed Systems)</a></li>
+<li><a href="#6-dedup-in-stream-processing-the-production-context">6. Dedup in Stream Processing (The Production Context)</a></li>
+<li><a href="#61-dedup-as-a-pipeline-stage">6.1 Dedup as a Pipeline Stage</a></li>
+<li><a href="#62-the-two-phase-pattern">6.2 The Two-Phase Pattern</a></li>
+<li><a href="#63-batch-vs-per-message-dedup">6.3 Batch vs Per-Message Dedup</a></li>
+<li><a href="#64-what-happens-when-dedup-fails">6.4 What Happens When Dedup Fails?</a></li>
+<li><a href="#7-how-glassflow-does-it">7. How GlassFlow Does It</a></li>
+<li><a href="#71-architecture">7.1 Architecture</a></li>
+<li><a href="#72-the-badger-kv-approach">7.2 The Badger KV Approach</a></li>
+<li><a href="#73-processor-chain-pattern">7.3 Processor Chain Pattern</a></li>
+<li><a href="#74-design-decisions-worth-noting">7.4 Design Decisions Worth Noting</a></li>
+<li><a href="#8-edge-cases-and-gotchas">8. Edge Cases and Gotchas</a></li>
+<li><a href="#9-the-assignment-through-this-lens">9. The Assignment Through This Lens</a></li>
+<li><a href="#10-further-reading">10. Further Reading</a></li>
+</ul>
+<hr />
+<h2 id="1-why-duplicates-exist">1. Why Duplicates Exist</h2>
+<h3 id="11-the-fundamental-problem-at-least-once-delivery">1.1 The Fundamental Problem: At-Least-Once Delivery</h3>
+<p>In any system where messages travel between components, there are three delivery guarantees you can aim for:</p>
+<table>
+<thead>
+<tr>
+<th>Guarantee</th>
+<th>Meaning</th>
+<th>Trade-off</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>At-most-once</strong></td>
+<td>Fire and forget. Message may be lost.</td>
+<td>Fast, simple. Data loss acceptable.</td>
+</tr>
+<tr>
+<td><strong>At-least-once</strong></td>
+<td>Retry until acknowledged. Message may arrive more than once.</td>
+<td>No data loss, but duplicates.</td>
+</tr>
+<tr>
+<td><strong>Exactly-once</strong></td>
+<td>Each message processed exactly one time.</td>
+<td>The holy grail. Extremely hard/expensive.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Exactly-once delivery is essentially impossible</strong> in distributed systems without cooperation between producer, broker, and consumer. What people call "exactly-once" is almost always "at-least-once delivery + deduplication" — which gives you <strong>exactly-once <em>processing</em></strong> semantics.</p>
+<p>This is the reason deduplication exists: <strong>it's the mechanism that bridges at-least-once delivery to exactly-once processing.</strong></p>
+<h3 id="12-where-duplicates-are-born">1.2 Where Duplicates Are Born</h3>
+<p>Duplicates aren't bugs — they're a natural consequence of reliable systems:</p>
+<p><strong>Producer retries:</strong> A producer sends a message, the network drops the ACK (not the message). The producer assumes failure and retries. The broker now has two copies.</p>
+<div class="codehilite"><pre><span></span><code>Producer ──msg──&gt; Broker  (received, stored)
+Producer &lt;──X──── Broker  (ACK lost in network)
+Producer ──msg──&gt; Broker  (retry — now stored twice)
+</code></pre></div>
+
+<p><strong>Consumer reprocessing:</strong> A consumer processes a message, crashes before committing its offset/ACK. On restart, it re-reads the same message.</p>
+<div class="codehilite"><pre><span></span><code>Consumer reads msg → processes → [CRASH before ACK]
+Consumer restarts  → reads same msg again → processes again
+</code></pre></div>
+
+<p><strong>Partition rebalancing:</strong> In Kafka-style systems, when consumers join/leave a group, partitions get reassigned. Offsets may roll back slightly, causing reprocessing of recent messages.</p>
+<p><strong>Network partitions and split-brain:</strong> Two instances of a producer both think they're the leader. Both produce the same logical message.</p>
+<p><strong>Application-level retries:</strong> An HTTP API times out. The caller retries. The first request actually succeeded — you've now triggered the same action twice.</p>
+<h3 id="13-why-not-just-prevent-them">1.3 Why Not Just Prevent Them?</h3>
+<p>You could try:</p>
+<ul>
+<li><strong>Kafka idempotent producers</strong> — eliminate producer-side duplicates within a session. Doesn't help with consumer-side duplicates.</li>
+<li><strong>Exactly-once transactions (Kafka EOS)</strong> — works within Kafka-to-Kafka pipelines. Falls apart the moment you involve an external system (a database, an API call).</li>
+<li><strong>TCP-style sequence numbers</strong> — requires tight coupling between producer and consumer. Doesn't scale to multi-producer, multi-consumer topologies.</li>
+</ul>
+<p>The reality: <strong>prevention is partial at best.</strong> Every production system that cares about correctness needs deduplication as a safety net.</p>
+<hr />
+<h2 id="2-what-deduplication-actually-is">2. What Deduplication Actually Is</h2>
+<h3 id="21-the-core-abstraction">2.1 The Core Abstraction</h3>
+<p>At its simplest, dedup is a stateful filter:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">for</span><span class="w"> </span><span class="nv">each</span><span class="w"> </span><span class="nv">message</span>:
+<span class="w">    </span><span class="nv">key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nv">extract_identity</span><span class="ss">(</span><span class="nv">message</span><span class="ss">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nv">key</span><span class="w"> </span><span class="nv">in</span><span class="w"> </span><span class="nv">seen_set</span>:
+<span class="w">        </span><span class="nv">drop</span><span class="ss">(</span><span class="nv">message</span><span class="ss">)</span><span class="w">       </span>#<span class="w"> </span><span class="nv">duplicate</span>
+<span class="w">    </span><span class="k">else</span>:
+<span class="w">        </span><span class="nv">seen_set</span>.<span class="nv">add</span><span class="ss">(</span><span class="nv">key</span><span class="ss">)</span>
+<span class="w">        </span><span class="nv">emit</span><span class="ss">(</span><span class="nv">message</span><span class="ss">)</span><span class="w">       </span>#<span class="w"> </span><span class="nv">first</span><span class="w"> </span><span class="nv">occurrence</span>
+</code></pre></div>
+
+<p>Three questions define every dedup implementation:
+1. <strong>What is the identity key?</strong> (how do you know two messages are "the same")
+2. <strong>How do you store the seen set?</strong> (data structure / persistence)
+3. <strong>How long do you remember?</strong> (forever vs time-bounded)</p>
+<h3 id="22-identity-what-makes-a-message-the-same">2.2 Identity: What Makes a Message "The Same"?</h3>
+<p>This is more subtle than it looks.</p>
+<p><strong>Option A: Natural key (a field in the payload)</strong>
+- E.g., <code>message.id</code>, <code>order.order_id</code>, <code>event.transaction_ref</code>
+- Simple, meaningful, business-aligned
+- Requires trusting the producer to populate it correctly
+- What the assignment asks for</p>
+<p><strong>Option B: Content hash</strong>
+- Hash the entire message body (SHA-256, xxHash, etc.)
+- No trust required — identical content = identical hash
+- Problem: two semantically identical messages with different timestamps or metadata would hash differently
+- Problem: hash collisions (astronomically rare but theoretically possible)</p>
+<p><strong>Option C: Composite key</strong>
+- Combine multiple fields: <code>(user_id, event_type, timestamp_bucket)</code>
+- More precise but more complex
+- Common in analytics pipelines</p>
+<p><strong>Option D: Broker-assigned ID</strong>
+- Kafka offset, NATS message ID, SQS message dedup ID
+- Tied to infrastructure, not business logic
+- What GlassFlow uses (NATS <code>Nats-Msg-Id</code> header)</p>
+<p><strong>The choice matters because it defines what "duplicate" means to your system.</strong> Two messages with the same <code>order_id</code> but different <code>status</code> fields — are they duplicates? Depends entirely on which field you chose as the key.</p>
+<h3 id="23-the-two-fundamental-modes">2.3 The Two Fundamental Modes</h3>
+<p><strong>Permanent deduplication (infinite window)</strong>
+- You remember every key you've ever seen
+- A message with a previously-seen key is <em>always</em> dropped
+- Simple semantics, but <strong>unbounded memory growth</strong>
+- Appropriate when: the key space is finite/bounded, or you genuinely need global uniqueness</p>
+<p><strong>Time-windowed deduplication (finite window)</strong>
+- You remember keys for a configurable duration (e.g., 5 minutes, 1 hour)
+- After the window expires, the same key is treated as new
+- Bounded memory, but a duplicate arriving after the window expires will slip through
+- Appropriate when: duplicates arrive within a known time bound (retries, reprocessing)</p>
+<p>Most production systems use time-windowed dedup because <strong>the failure modes that produce duplicates are temporally bounded.</strong> A Kafka consumer rebalance creates duplicates within seconds, not days. A producer retry happens within minutes, not weeks.</p>
+<hr />
+<h2 id="3-data-structures-for-dedup-state">3. Data Structures for Dedup State</h2>
+<h3 id="31-hash-map-the-obvious-choice">3.1 Hash Map (The Obvious Choice)</h3>
+<div class="codehilite"><pre><span></span><code><span class="nx">seen</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="p">{}</span><span class="w">  </span><span class="c1">// key → first-seen timestamp</span>
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lookup</td>
+<td>O(1) average</td>
+</tr>
+<tr>
+<td>Memory</td>
+<td>~80-120 bytes per entry in Go (key string + time + map overhead)</td>
+</tr>
+<tr>
+<td>False positives</td>
+<td>Zero — exact matching</td>
+</tr>
+<tr>
+<td>False negatives</td>
+<td>Zero — if it's there, you find it</td>
+</tr>
+<tr>
+<td>Persistence</td>
+<td>None — lost on restart</td>
+</tr>
+<tr>
+<td>TTL support</td>
+<td>Manual (sweep goroutine or lazy check on access)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>When to use:</strong> Small to medium key spaces, ephemeral processes, CLI tools, prototypes. This is what the assignment expects for the basic version.</p>
+<p><strong>The problem at scale:</strong> 100M unique keys * ~100 bytes = ~10 GB of RAM. Not tenable for long-running services with high cardinality.</p>
+<h3 id="32-bloom-filters-probabilistic">3.2 Bloom Filters (Probabilistic)</h3>
+<p>A Bloom filter is a space-efficient probabilistic set. It can tell you:
+- "Definitely NOT in the set" (no false negatives)
+- "Probably in the set" (configurable false positive rate)</p>
+<div class="codehilite"><pre><span></span><code>Insert &quot;abc&quot;:  hash1(&quot;abc&quot;)=3, hash2(&quot;abc&quot;)=7 → set bits 3,7
+Check &quot;xyz&quot;:   hash1(&quot;xyz&quot;)=3, hash2(&quot;xyz&quot;)=5 → bit 5 not set → definitely new
+Check &quot;abc&quot;:   hash1(&quot;abc&quot;)=3, hash2(&quot;abc&quot;)=7 → both set → probably seen
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lookup</td>
+<td>O(k) where k = number of hash functions</td>
+</tr>
+<tr>
+<td>Memory</td>
+<td>~10 bits per element for 1% FP rate (vs ~800 bits for hash map)</td>
+</tr>
+<tr>
+<td>False positives</td>
+<td>Yes — configurable (0.1%, 1%, etc.)</td>
+</tr>
+<tr>
+<td>False negatives</td>
+<td><strong>Never</strong> — if you added it, the filter will always say "probably yes"</td>
+</tr>
+<tr>
+<td>Deletion</td>
+<td>Not supported (standard Bloom filter)</td>
+</tr>
+<tr>
+<td>TTL</td>
+<td>Not native — need rotating Bloom filters</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The false positive direction matters for dedup.</strong> A false positive means "we think we've seen this, but we haven't" → we drop a message we shouldn't. This is <strong>data loss</strong>. So Bloom filters for dedup need very low FP rates, which eats into their space advantage.</p>
+<p><strong>Rotating Bloom filters for TTL:</strong> Use N bloom filters, one per time bucket. Check all N for membership. When the oldest bucket expires, clear it and reuse. This gives you approximate time-windowed dedup.</p>
+<h3 id="33-cuckoo-filters">3.3 Cuckoo Filters</h3>
+<p>An improvement over Bloom filters that supports deletion:</p>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lookup</td>
+<td>O(1)</td>
+</tr>
+<tr>
+<td>Memory</td>
+<td>Slightly better than Bloom for FP rates &lt; 3%</td>
+</tr>
+<tr>
+<td>False positives</td>
+<td>Yes, but lower than Bloom for same memory</td>
+</tr>
+<tr>
+<td>Deletion</td>
+<td>Supported (unlike Bloom)</td>
+</tr>
+<tr>
+<td>TTL</td>
+<td>Possible via deletion</td>
+</tr>
+</tbody>
+</table>
+<p>Relevant when you need probabilistic dedup WITH the ability to expire individual keys.</p>
+<h3 id="34-key-value-stores-with-ttl">3.4 Key-Value Stores with TTL</h3>
+<p>This is what GlassFlow uses (Badger), and what production systems typically reach for:</p>
+<p><strong>Embedded KV stores (Badger, BoltDB, LevelDB, RocksDB):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lookup</td>
+<td>O(log n) — LSM tree or B-tree</td>
+</tr>
+<tr>
+<td>Memory</td>
+<td>Configurable — hot data in RAM, cold on disk</td>
+</tr>
+<tr>
+<td>Persistence</td>
+<td>Yes — survives restart</td>
+</tr>
+<tr>
+<td>TTL</td>
+<td>Native in Badger; manual in others</td>
+</tr>
+<tr>
+<td>Capacity</td>
+<td>Limited by disk, not RAM</td>
+</tr>
+</tbody>
+</table>
+<p><strong>External KV stores (Redis, Memcached):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lookup</td>
+<td>O(1) for Redis hash</td>
+</tr>
+<tr>
+<td>TTL</td>
+<td>Native (<code>SETEX</code>, <code>EXPIRE</code>)</td>
+</tr>
+<tr>
+<td>Persistence</td>
+<td>Optional (Redis RDB/AOF)</td>
+</tr>
+<tr>
+<td>Shared</td>
+<td>Multiple consumers can share dedup state</td>
+</tr>
+<tr>
+<td>Trade-off</td>
+<td>Network hop per lookup, operational overhead</td>
+</tr>
+</tbody>
+</table>
+<p>The choice between embedded vs external depends on whether dedup state needs to be shared across processes.</p>
+<h3 id="35-sorted-sets-skip-lists">3.5 Sorted Sets / Skip Lists</h3>
+<p>Used when you need to efficiently expire by time range:</p>
+<div class="codehilite"><pre><span></span><code>sorted_set: { (timestamp, key), (timestamp, key), ... }
+</code></pre></div>
+
+<p>You can do range deletions: "delete all entries with timestamp &lt; now - window". Useful when you want to control cleanup precisely rather than relying on per-key TTLs.</p>
+<h3 id="36-comparison-matrix">3.6 Comparison Matrix</h3>
+<table>
+<thead>
+<tr>
+<th>Structure</th>
+<th>Memory</th>
+<th>Exactness</th>
+<th>TTL</th>
+<th>Persistence</th>
+<th>Best For</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>map[string]T</code></td>
+<td>High</td>
+<td>Exact</td>
+<td>Manual</td>
+<td>No</td>
+<td>Small scale, CLIs, tests</td>
+</tr>
+<tr>
+<td>Bloom filter</td>
+<td>Very low</td>
+<td>Probabilistic</td>
+<td>Rotation</td>
+<td>No</td>
+<td>Massive scale, loss-tolerant</td>
+</tr>
+<tr>
+<td>Cuckoo filter</td>
+<td>Low</td>
+<td>Probabilistic</td>
+<td>Via delete</td>
+<td>No</td>
+<td>When you need delete + space</td>
+</tr>
+<tr>
+<td>Badger/RocksDB</td>
+<td>Disk-backed</td>
+<td>Exact</td>
+<td>Native/manual</td>
+<td>Yes</td>
+<td>Production stream processing</td>
+</tr>
+<tr>
+<td>Redis</td>
+<td>RAM (remote)</td>
+<td>Exact</td>
+<td>Native</td>
+<td>Optional</td>
+<td>Shared state across consumers</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="4-time-windowed-deduplication">4. Time-Windowed Deduplication</h2>
+<h3 id="41-why-not-just-dedup-forever">4.1 Why Not Just Dedup Forever?</h3>
+<p>Three reasons:</p>
+<ol>
+<li>
+<p><strong>Memory/storage grows without bound.</strong> If you see 1M unique keys per hour and never forget, after a week you're tracking 168M keys. After a month, 720M. Eventually you OOM or fill the disk.</p>
+</li>
+<li>
+<p><strong>Legitimate re-use of keys.</strong> A sensor might cycle through device IDs. A user might submit the same form legitimately after a cooling period. Permanent dedup would silently drop valid data.</p>
+</li>
+<li>
+<p><strong>The duplicate threat is temporally bounded.</strong> Network retries happen within seconds. Consumer rebalances within minutes. There's no mechanism that creates duplicates weeks later.</p>
+</li>
+</ol>
+<h3 id="42-expiry-strategies">4.2 Expiry Strategies</h3>
+<p><strong>Strategy 1: Per-key TTL</strong>
+Each key gets a timestamp or TTL when stored. Expired keys are either lazily evicted (checked on access) or actively swept.</p>
+<div class="codehilite"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">entry</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">expiresAt</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span>
+<span class="p">}</span>
+<span class="nx">seen</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="nx">entry</span><span class="p">{}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">isDuplicate</span><span class="p">(</span><span class="nx">key</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">now</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="p">,</span><span class="w"> </span><span class="nx">window</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Duration</span><span class="p">)</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">e</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">seen</span><span class="p">[</span><span class="nx">key</span><span class="p">];</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nx">now</span><span class="p">.</span><span class="nx">Before</span><span class="p">(</span><span class="nx">e</span><span class="p">.</span><span class="nx">expiresAt</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">true</span><span class="w">  </span><span class="c1">// seen within window</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">seen</span><span class="p">[</span><span class="nx">key</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">entry</span><span class="p">{</span><span class="nx">expiresAt</span><span class="p">:</span><span class="w"> </span><span class="nx">now</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="nx">window</span><span class="p">)}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">false</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<ul>
+<li>Pro: Precise per-key expiry.</li>
+<li>Con: Need cleanup mechanism for expired keys. Lazy-only check means expired keys stay in memory until accessed again (which for dedup might be never).</li>
+</ul>
+<p><strong>Strategy 2: Background sweeper goroutine</strong>
+Periodically scan the map and delete expired entries.</p>
+<div class="codehilite"><pre><span></span><code><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ticker</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">NewTicker</span><span class="p">(</span><span class="nx">sweepInterval</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">ticker</span><span class="p">.</span><span class="nx">C</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">now</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Now</span><span class="p">()</span>
+<span class="w">        </span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">k</span><span class="p">,</span><span class="w"> </span><span class="nx">e</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">seen</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="nx">now</span><span class="p">.</span><span class="nx">After</span><span class="p">(</span><span class="nx">e</span><span class="p">.</span><span class="nx">expiresAt</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="nb">delete</span><span class="p">(</span><span class="nx">seen</span><span class="p">,</span><span class="w"> </span><span class="nx">k</span><span class="p">)</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}()</span>
+</code></pre></div>
+
+<ul>
+<li>Pro: Memory stays bounded.</li>
+<li>Con: Full scan is O(n). Sweep interval introduces a lag — entries live slightly beyond their TTL.</li>
+</ul>
+<p><strong>Strategy 3: Time-bucketed maps (generation approach)</strong>
+Maintain multiple maps, one per time bucket. Check all buckets. Drop the oldest bucket when it expires.</p>
+<div class="codehilite"><pre><span></span><code><span class="c1">// With 1-hour window and 10-minute buckets:</span>
+<span class="nx">buckets</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[</span><span class="mi">6</span><span class="p">]</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">bool</span><span class="p">{}</span><span class="w">  </span><span class="c1">// 6 buckets of 10 min each</span>
+<span class="nx">currentBucket</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span>
+
+<span class="c1">// Every 10 minutes: clear oldest bucket, advance pointer</span>
+<span class="c1">// To check: scan all 6 buckets</span>
+</code></pre></div>
+
+<ul>
+<li>Pro: O(1) cleanup (just clear one bucket). No per-key overhead.</li>
+<li>Con: Granularity limited by bucket size. Entries may live up to <code>window + bucket_size</code>.</li>
+</ul>
+<p><strong>Strategy 4: Delegate to the storage engine</strong>
+Use Badger/Redis TTL and let the engine handle expiry. This is what GlassFlow does.</p>
+<ul>
+<li>Pro: No application-level cleanup code.</li>
+<li>Con: Coupled to a specific storage engine.</li>
+</ul>
+<h3 id="43-wall-clock-vs-event-time">4.3 Wall Clock vs Event Time</h3>
+<p>A subtle but important distinction:</p>
+<p><strong>Wall clock time:</strong> The TTL is based on when the dedup service <em>processes</em> the message. Simple, deterministic from the service's perspective.</p>
+<p><strong>Event time:</strong> The TTL is based on a timestamp <em>within the message</em>. Correct for out-of-order events, but introduces complexity — what if event time is in the future? What if it's way in the past?</p>
+<p>For the assignment and most practical dedup, <strong>wall clock time is fine.</strong> Event-time dedup is a deep rabbit hole (watermarks, late arrivals, etc.) that stream processing frameworks like Flink deal with.</p>
+<h3 id="44-the-edge-at-window-boundaries">4.4 The Edge at Window Boundaries</h3>
+<p>Consider: message arrives at T=0, window=60s. At T=59, a duplicate arrives — correctly dropped. At T=61, another duplicate arrives — it passes through because the window expired.</p>
+<p>This is <strong>by design, not a bug.</strong> But it means:</p>
+<ul>
+<li>Window size should exceed the maximum expected duplicate delay</li>
+<li>In practice: if retries have a 30s timeout, a 5-minute window is very safe</li>
+<li>The assignment specifies 1s to 1 week — the wide range hints they want you to think about this</li>
+</ul>
+<hr />
+<h2 id="5-the-trade-off-space">5. The Trade-Off Space</h2>
+<h3 id="51-memory-vs-accuracy">5.1 Memory vs Accuracy</h3>
+<p>This is the fundamental tension:</p>
+<div class="codehilite"><pre><span></span><code>More memory = exact dedup (hash map of all keys)
+Less memory = probabilistic dedup (Bloom filter)
+</code></pre></div>
+
+<p>At small scale (&lt; 1M keys), just use a map. At large scale (billions of keys), you need to decide: is a 0.01% false positive rate (= 0.01% data loss) acceptable? For some analytics pipelines, yes. For financial transactions, no.</p>
+<h3 id="52-latency-vs-throughput">5.2 Latency vs Throughput</h3>
+<p><strong>Per-message dedup</strong> adds latency to every message but keeps throughput predictable.</p>
+<p><strong>Batch dedup</strong> accumulates messages, deduplicates within and across the batch, then emits. Higher throughput (fewer store lookups), but adds latency equal to the batch window.</p>
+<p>GlassFlow batches up to 50,000 messages or 100ms — a throughput-optimized choice.</p>
+<h3 id="53-exactness-vs-efficiency">5.3 Exactness vs Efficiency</h3>
+<table>
+<thead>
+<tr>
+<th>Approach</th>
+<th>Guarantees</th>
+<th>Cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Exact dedup (hash map)</td>
+<td>No false positives, no false negatives</td>
+<td>O(n) memory</td>
+</tr>
+<tr>
+<td>Probabilistic dedup (Bloom)</td>
+<td>No false negatives, rare false positives</td>
+<td>O(1) memory*</td>
+</tr>
+<tr>
+<td>Content-hash dedup</td>
+<td>No false negatives*, extremely rare collisions</td>
+<td>O(n) memory, hash computation cost</td>
+</tr>
+</tbody>
+</table>
+<p>*Bloom filters are technically O(n) but with a constant ~10 bits per element vs ~800+ for a hash map.</p>
+<h3 id="54-simplicity-vs-durability">5.4 Simplicity vs Durability</h3>
+<p><strong>In-memory (map):</strong> Simple, fast, zero dependencies. Lose all state on crash/restart → duplicates will pass through until the map is repopulated.</p>
+<p><strong>On-disk (Badger, SQLite):</strong> Survives restarts, bounded memory. More complex, I/O latency, compaction overhead.</p>
+<p><strong>External (Redis):</strong> Shared across instances, can survive individual crashes. Network latency, operational overhead, another thing to monitor.</p>
+<p>For a CLI tool reading STDIN: in-memory is perfect. For a long-running service: you need persistence.</p>
+<h3 id="55-the-cap-angle-distributed-systems">5.5 The CAP Angle (Distributed Systems)</h3>
+<p>When you have multiple instances of a dedup service (horizontal scaling), you face a distributed state problem:</p>
+<ul>
+<li><strong>Shared nothing:</strong> Each instance has its own dedup state. A message routed to instance A, then its duplicate routed to instance B — duplicate passes through. Solution: consistent routing (partition by dedup key).</li>
+<li><strong>Shared state (Redis):</strong> All instances check the same store. Consistent but introduces a bottleneck and a SPOF.</li>
+<li><strong>Replicated state:</strong> Each instance replicates state to others. Consistency lag means brief windows where duplicates pass.</li>
+</ul>
+<p>This is why Kafka's consumer groups use partition assignment — each partition is processed by exactly one consumer, making dedup a local problem.</p>
+<hr />
+<h2 id="6-dedup-in-stream-processing-the-production-context">6. Dedup in Stream Processing (The Production Context)</h2>
+<h3 id="61-dedup-as-a-pipeline-stage">6.1 Dedup as a Pipeline Stage</h3>
+<p>In mature stream processing systems, dedup isn't a standalone service — it's one stage in a processing pipeline:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">Source</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="o">[</span><span class="n">Ingest</span><span class="o">]</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="o">[</span><span class="n">Filter</span><span class="o">]</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="o">[</span><span class="n">Dedup</span><span class="o">]</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="o">[</span><span class="n">Transform</span><span class="o">]</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="o">[</span><span class="n">Sink</span><span class="o">]</span>
+</code></pre></div>
+
+<p>Each stage is a processor implementing a common interface. This is the middleware/chain-of-responsibility pattern. Messages flow through, each processor can:
+- Pass messages through unchanged
+- Drop messages (filter, dedup)
+- Modify messages (transform)
+- Add messages to a dead letter queue (error handling)
+- Fail fatally (stop the pipeline)</p>
+<h3 id="62-the-two-phase-pattern">6.2 The Two-Phase Pattern</h3>
+<p>A critical design pattern for dedup in pipelines:</p>
+<p><strong>Phase 1: Read (FilterDuplicates)</strong>
+- Check the dedup store
+- Separate messages into "new" and "duplicate"
+- Do NOT write to the store yet</p>
+<p><strong>Phase 2: Commit (SaveKeys)</strong>
+- Only called AFTER downstream processing succeeds
+- Persist the keys of successfully processed messages</p>
+<p><strong>Why two phases?</strong> Imagine you write keys immediately in Phase 1, then the downstream sink fails. The messages are NAK'd and will be redelivered. But now the dedup store thinks they're duplicates and drops them. <strong>You've lost data.</strong></p>
+<p>The two-phase approach ensures: if downstream fails, keys aren't committed, so redelivered messages pass through dedup again. This is exactly what GlassFlow does.</p>
+<h3 id="63-batch-vs-per-message-dedup">6.3 Batch vs Per-Message Dedup</h3>
+<p><strong>Per-message:</strong></p>
+<div class="codehilite"><pre><span></span><code><span class="k">for</span><span class="w"> </span><span class="nx">msg</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">input</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">seen</span><span class="p">[</span><span class="nx">msg</span><span class="p">.</span><span class="nx">Key</span><span class="p">]</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">seen</span><span class="p">[</span><span class="nx">msg</span><span class="p">.</span><span class="nx">Key</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">        </span><span class="nx">output</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">msg</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>Batched:</strong></p>
+<div class="codehilite"><pre><span></span><code><span class="nx">batch</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">collectBatch</span><span class="p">(</span><span class="nx">input</span><span class="p">,</span><span class="w"> </span><span class="nx">maxSize</span><span class="p">,</span><span class="w"> </span><span class="nx">maxWait</span><span class="p">)</span>
+<span class="nx">unique</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">filterDuplicates</span><span class="p">(</span><span class="nx">batch</span><span class="p">,</span><span class="w"> </span><span class="nx">store</span><span class="p">)</span>
+<span class="nx">processBatch</span><span class="p">(</span><span class="nx">unique</span><span class="p">)</span>
+<span class="nx">commitKeys</span><span class="p">(</span><span class="nx">unique</span><span class="p">,</span><span class="w"> </span><span class="nx">store</span><span class="p">)</span>
+</code></pre></div>
+
+<p>Batching amortizes the cost of store operations. Checking 1000 keys in one Badger transaction is much faster than 1000 individual lookups.</p>
+<h3 id="64-what-happens-when-dedup-fails">6.4 What Happens When Dedup Fails?</h3>
+<p>Three strategies:</p>
+<ol>
+<li>
+<p><strong>Fail open:</strong> If you can't check dedup state, let messages through. Risk: duplicates reach downstream. Used when data loss is worse than duplicates.</p>
+</li>
+<li>
+<p><strong>Fail closed:</strong> If you can't check dedup state, drop/NAK messages. Risk: data doesn't flow. Used when duplicates are dangerous (financial transactions).</p>
+</li>
+<li>
+<p><strong>Dead letter queue (DLQ):</strong> Messages that can't be deduplicated go to a separate queue for manual review or retry.</p>
+</li>
+</ol>
+<p>GlassFlow uses fail-closed: dedup errors return <code>FatalError</code>, messages are NAK'd for redelivery.</p>
+<hr />
+<h2 id="7-how-glassflow-does-it">7. How GlassFlow Does It</h2>
+<h3 id="71-architecture">7.1 Architecture</h3>
+<div class="codehilite"><pre><span></span><code>Kafka → Ingestor → NATS JetStream → [Filter → Dedup → Transform] → Sink → ClickHouse
+                                            ↓
+                                      Badger KV (dedup state)
+</code></pre></div>
+
+<p>The dedup component runs as a separate process role (<code>dedup</code>), reading from NATS and writing back to NATS. It's horizontally scaled by partitioning NATS subjects.</p>
+<h3 id="72-the-badger-kv-approach">7.2 The Badger KV Approach</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1">// Write: store key with TTL, empty value</span>
+<span class="nx">entry</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">badger</span><span class="p">.</span><span class="nx">NewEntry</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="nx">msgID</span><span class="p">),</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="p">{}).</span><span class="nx">WithTTL</span><span class="p">(</span><span class="nx">ttl</span><span class="p">)</span>
+
+<span class="c1">// Read: just check if key exists</span>
+<span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">txn</span><span class="p">.</span><span class="nx">Get</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="nx">msgID</span><span class="p">))</span>
+<span class="k">if</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">Is</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="nx">badger</span><span class="p">.</span><span class="nx">ErrKeyNotFound</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Not a duplicate</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>Key design choices:
+- <strong>Empty values</strong> — only the key existence matters, not what's stored. Minimizes disk usage.
+- <strong>Native TTL</strong> — Badger handles expiry and compaction. No application-level cleanup code.
+- <strong>Embedded</strong> — no network hop. Dedup latency is just disk I/O (often memory-mapped).</p>
+<h3 id="73-processor-chain-pattern">7.3 Processor Chain Pattern</h3>
+<div class="codehilite"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">Processor</span><span class="w"> </span><span class="kd">interface</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ProcessBatch</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">batch</span><span class="w"> </span><span class="nx">ProcessorBatch</span><span class="p">)</span><span class="w"> </span><span class="nx">ProcessorBatch</span>
+<span class="p">}</span>
+
+<span class="c1">// Chain: Filter → Dedup → Transform</span>
+<span class="nx">chain</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">ChainProcessors</span><span class="p">(</span><span class="nx">middlewares</span><span class="p">,</span><span class="w"> </span><span class="nx">transformProcessor</span><span class="p">)</span>
+</code></pre></div>
+
+<p>Each processor receives a batch, returns a batch. Processors can attach <code>CommitFn</code> functions that run only after the full chain succeeds. The DLQ middleware wraps processors to catch failed messages.</p>
+<h3 id="74-design-decisions-worth-noting">7.4 Design Decisions Worth Noting</h3>
+<table>
+<thead>
+<tr>
+<th>Decision</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Uses NATS message ID, not payload field</td>
+<td>Decouples dedup identity from business logic</td>
+</tr>
+<tr>
+<td>Messages without ID always pass through</td>
+<td>Fail-open for unidentified messages — data availability over strictness</td>
+</tr>
+<tr>
+<td>Two-phase commit (filter, then save)</td>
+<td>Prevents data loss on downstream failure</td>
+</tr>
+<tr>
+<td>Batch size 50K / 100ms flush</td>
+<td>Throughput-optimized for high-volume streams</td>
+</tr>
+<tr>
+<td>Badger with nil logger</td>
+<td>Silent in production — observability via OpenTelemetry instead</td>
+</tr>
+<tr>
+<td><code>NoopProcessor</code> when dedup disabled</td>
+<td>Avoids nil checks throughout the chain — null object pattern</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8-edge-cases-and-gotchas">8. Edge Cases and Gotchas</h2>
+<p><strong>1. The field doesn't exist in the message.</strong>
+What do you do when the dedup field (e.g., <code>"id"</code>) is missing from a JSON message? Options:
+- Treat as unique (pass through) — GlassFlow's approach
+- Treat as error (drop or DLQ)
+- Use a hash of the full message as fallback
+The assignment doesn't specify. Your choice here shows judgment.</p>
+<p><strong>2. The field value is not a simple type.</strong>
+<code>{"id": {"nested": "object"}}</code> — deduplicating by <code>id</code> means stringifying a JSON object. Different serializations of the same object could produce different strings. Be explicit about how you normalize the key.</p>
+<p><strong>3. Numeric types in JSON.</strong>
+JSON has no integer type. <code>{"id": 1}</code> and <code>{"id": 1.0}</code> may parse differently depending on your JSON library. In Go, <code>json.Unmarshal</code> into <code>interface{}</code> turns all numbers into <code>float64</code>. So <code>1</code> becomes <code>1</code> as float64, which stringifies as <code>1</code> — consistent, but worth being aware of.</p>
+<p><strong>4. Concurrent access to the seen set.</strong>
+If you ever parallelize message processing (goroutines per line), the map needs synchronization (<code>sync.Mutex</code> or <code>sync.Map</code>). For a STDIN line-reader, this isn't needed — but mentioning it in NOTES.md shows awareness.</p>
+<p><strong>5. Memory growth with permanent dedup.</strong>
+With no TTL and an unbounded stream, your map grows forever. In a 3-hour exercise, this is fine. In production, this is a memory leak. Mentioning this trade-off is important.</p>
+<p><strong>6. What "deduplication period" means for ordering.</strong>
+If messages arrive: A(t=0), B(t=1), A(t=5) with a 10s window — second A is dropped. But if A(t=0), B(t=1), A(t=15) with a 10s window — second A passes through. The ordering of output depends on input timing.</p>
+<p><strong>7. Graceful vs ungraceful shutdown.</strong>
+STDIN can end with EOF (graceful) or the process can be killed. If you buffer messages (batching), ungraceful shutdown means losing the buffer. For the assignment (no batching, line-by-line), this isn't an issue.</p>
+<p><strong>8. Empty lines, malformed JSON, whitespace.</strong>
+Real-world input is messy. How you handle non-JSON lines (skip silently? write to stderr? exit with error?) is a minor but telling design choice.</p>
+<hr />
+<h2 id="9-the-assignment-through-this-lens">9. The Assignment Through This Lens</h2>
+<p>The assignment is a simplified dedup scenario:</p>
+<table>
+<thead>
+<tr>
+<th>Production concern</th>
+<th>Assignment scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Kafka/NATS streams</td>
+<td>STDIN/STDOUT</td>
+</tr>
+<tr>
+<td>Broker-assigned IDs</td>
+<td>Payload field name (CLI arg)</td>
+</tr>
+<tr>
+<td>Badger KV with TTL</td>
+<td><code>map[string]time.Time</code> is sufficient</td>
+</tr>
+<tr>
+<td>Two-phase commit</td>
+<td>Not needed (no downstream failure risk)</td>
+</tr>
+<tr>
+<td>Batch processing</td>
+<td>Line-by-line is fine</td>
+</tr>
+<tr>
+<td>Distributed state</td>
+<td>Single process</td>
+</tr>
+<tr>
+<td>Persistence across restarts</td>
+<td>Not needed (ephemeral CLI)</td>
+</tr>
+<tr>
+<td>Billions of keys</td>
+<td>Trivial scale</td>
+</tr>
+</tbody>
+</table>
+<p>What remains are the <strong>core concepts:</strong>
+1. Extract a key from a JSON message by field name
+2. Track seen keys with optional time window
+3. Emit only first-seen messages</p>
+<p>The simplicity is the point. They want to see how you structure even simple code, not whether you can build Kafka.</p>
+<p><strong>What distinguishes a strong submission:</strong>
+- Clean separation: arg parsing, dedup logic, I/O
+- Correct TTL: lazy or active expiry, not just a map with timestamps you never check
+- Edge cases acknowledged: missing fields, malformed JSON, memory growth
+- Testable: dedup logic separated from I/O so it can be unit tested
+- Commit progression: scaffold → basic dedup → TTL → edge cases → tests → NOTES.md</p>
+<hr />
+<h2 id="10-further-reading">10. Further Reading</h2>
+<ul>
+<li><strong>Designing Data-Intensive Applications</strong> (Kleppmann) — Chapter 11 on stream processing covers exactly-once semantics and dedup</li>
+<li><strong>Kafka: The Definitive Guide</strong> — Chapter on idempotent producers and exactly-once semantics</li>
+<li><strong>Bloom Filters by Example</strong> — https://llimllib.github.io/bloomfilter-tutorial/</li>
+<li><strong>Badger KV design doc</strong> — explains the LSM tree + value log architecture that makes TTL efficient</li>
+<li><strong>NATS JetStream dedup</strong> — NATS has built-in message dedup using <code>Nats-Msg-Id</code> headers, which is what GlassFlow leverages</li>
+<li><strong>The Two Generals' Problem</strong> — the theoretical impossibility result underpinning why exactly-once delivery is impossible</li>
+</ul>
+<a href="#message-deduplication-a-complete-guide" class="top-link" aria-label="Back to top">&uarr;</a>
+</body>
+</html>
