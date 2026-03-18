@@ -300,6 +300,7 @@
 </table>
 <p><strong>Exactly-once delivery is essentially impossible</strong> in distributed systems without cooperation between producer, broker, and consumer. What people call "exactly-once" is almost always "at-least-once delivery + deduplication" — which gives you <strong>exactly-once <em>processing</em></strong> semantics.</p>
 <p>This is the reason deduplication exists: <strong>it's the mechanism that bridges at-least-once delivery to exactly-once processing.</strong></p>
+<blockquote><strong>GlassFlow in practice:</strong> GlassFlow's pipeline uses NATS JetStream, which provides at-least-once delivery. Their dedup layer is what gives them exactly-once processing semantics.</blockquote>
 <h3 id="12-where-duplicates-are-born">1.2 Where Duplicates Are Born</h3>
 <p>Duplicates aren't bugs — they're a natural consequence of reliable systems:</p>
 <p><strong>Producer retries:</strong> A producer sends a message, the network drops the ACK (not the message). The producer assumes failure and retries. The broker now has two copies.</p>
@@ -313,6 +314,7 @@ Producer ──msg──&gt; Broker  (retry — now stored twice)
 Consumer restarts  → reads same msg again → processes again
 </code></pre></div>
 
+<blockquote>GlassFlow explicitly NAKs messages on processing failure, which triggers NATS redelivery — an intentional source of duplicates that the dedup layer is designed to absorb.</blockquote>
 <p><strong>Partition rebalancing:</strong> In Kafka-style systems, when consumers join/leave a group, partitions get reassigned. Offsets may roll back slightly, causing reprocessing of recent messages.</p>
 <p><strong>Network partitions and split-brain:</strong> Two instances of a producer both think they're the leader. Both produce the same logical message.</p>
 <p><strong>Application-level retries:</strong> An HTTP API times out. The caller retries. The first request actually succeeded — you've now triggered the same action twice.</p>
@@ -360,7 +362,8 @@ Consumer restarts  → reads same msg again → processes again
 <p><strong>Option D: Broker-assigned ID</strong>
 - Kafka offset, NATS message ID, SQS message dedup ID
 - Tied to infrastructure, not business logic
-- What GlassFlow uses (NATS <code>Nats-Msg-Id</code> header)</p>
+- What GlassFlow uses (NATS <code>Nats-Msg-Id</code> header)
+- GlassFlow chose this over payload fields because it decouples dedup identity from business logic — the ingestor assigns <code>Nats-Msg-Id</code> at the Kafka→NATS bridge, so dedup works regardless of payload schema. Their config does have <code>id_field</code> and <code>id_field_type</code> in <code>DeduplicationConfig</code>, but these are currently unused — suggesting they considered payload-based dedup but opted for the simpler approach first.</p>
 <p><strong>The choice matters because it defines what "duplicate" means to your system.</strong> Two messages with the same <code>order_id</code> but different <code>status</code> fields — are they duplicates? Depends entirely on which field you chose as the key.</p>
 <h3 id="23-the-two-fundamental-modes">2.3 The Two Fundamental Modes</h3>
 <p><strong>Permanent deduplication (infinite window)</strong>
@@ -374,6 +377,7 @@ Consumer restarts  → reads same msg again → processes again
 - Bounded memory, but a duplicate arriving after the window expires will slip through
 - Appropriate when: duplicates arrive within a known time bound (retries, reprocessing)</p>
 <p>Most production systems use time-windowed dedup because <strong>the failure modes that produce duplicates are temporally bounded.</strong> A Kafka consumer rebalance creates duplicates within seconds, not days. A producer retry happens within minutes, not weeks.</p>
+<blockquote>GlassFlow's <code>DeduplicationConfig</code> has a <code>time_window</code> field (<code>JSONDuration</code>). When the window is zero, Badger entries get no TTL — effectively permanent dedup. Non-zero gives time-windowed. One config field, both modes.</blockquote>
 <hr />
 <h2 id="3-data-structures-for-dedup-state">3. Data Structures for Dedup State</h2>
 <h3 id="31-hash-map-the-obvious-choice">3.1 Hash Map (The Obvious Choice)</h3>
@@ -415,6 +419,7 @@ Consumer restarts  → reads same msg again → processes again
 </tbody>
 </table>
 <p><strong>When to use:</strong> Small to medium key spaces, ephemeral processes, CLI tools, prototypes. This is what the assignment expects for the basic version.</p>
+<blockquote>GlassFlow uses in-memory Badger (no disk) for unit tests — functionally identical to a map but with the same API as production. This lets them test dedup logic without mocking the storage layer.</blockquote>
 <p><strong>The problem at scale:</strong> 100M unique keys * ~100 bytes = ~10 GB of RAM. Not tenable for long-running services with high cardinality.</p>
 <h3 id="32-bloom-filters-probabilistic">3.2 Bloom Filters (Probabilistic)</h3>
 <p>A Bloom filter is a space-efficient probabilistic set. It can tell you:
@@ -697,11 +702,13 @@ Use Badger/Redis TTL and let the engine handle expiry. This is what GlassFlow do
 <li>Pro: No application-level cleanup code.</li>
 <li>Con: Coupled to a specific storage engine.</li>
 </ul>
+<blockquote>GlassFlow writes <code>badger.NewEntry(key, []byte{}).WithTTL(ttl)</code> — the empty value means they're storing only existence, not data. Badger's LSM compaction automatically reclaims expired keys. Zero application-level cleanup code.</blockquote>
 <h3 id="43-wall-clock-vs-event-time">4.3 Wall Clock vs Event Time</h3>
 <p>A subtle but important distinction:</p>
 <p><strong>Wall clock time:</strong> The TTL is based on when the dedup service <em>processes</em> the message. Simple, deterministic from the service's perspective.</p>
 <p><strong>Event time:</strong> The TTL is based on a timestamp <em>within the message</em>. Correct for out-of-order events, but introduces complexity — what if event time is in the future? What if it's way in the past?</p>
 <p>For the assignment and most practical dedup, <strong>wall clock time is fine.</strong> Event-time dedup is a deep rabbit hole (watermarks, late arrivals, etc.) that stream processing frameworks like Flink deal with.</p>
+<blockquote>GlassFlow uses wall clock — TTL starts when <code>SaveKeys</code> writes to Badger, not when the original Kafka message was produced. Simple and sufficient for their retry-driven duplicate profile.</blockquote>
 <h3 id="44-the-edge-at-window-boundaries">4.4 The Edge at Window Boundaries</h3>
 <p>Consider: message arrives at T=0, window=60s. At T=59, a duplicate arrives — correctly dropped. At T=61, another duplicate arrives — it passes through because the window expired.</p>
 <p>This is <strong>by design, not a bug.</strong> But it means:</p>
@@ -759,7 +766,7 @@ Less memory = probabilistic dedup (Bloom filter)
 <h3 id="55-the-cap-angle-distributed-systems">5.5 The CAP Angle (Distributed Systems)</h3>
 <p>When you have multiple instances of a dedup service (horizontal scaling), you face a distributed state problem:</p>
 <ul>
-<li><strong>Shared nothing:</strong> Each instance has its own dedup state. A message routed to instance A, then its duplicate routed to instance B — duplicate passes through. Solution: consistent routing (partition by dedup key).</li>
+<li><strong>Shared nothing:</strong> Each instance has its own dedup state. A message routed to instance A, then its duplicate routed to instance B — duplicate passes through. Solution: consistent routing (partition by dedup key). This is exactly GlassFlow's approach — each dedup pod gets a <code>GLASSFLOW_POD_INDEX</code> that maps to a specific NATS subject partition. Same message ID always routes to the same pod, so dedup state stays local to a single Badger instance. No distributed coordination needed.</li>
 <li><strong>Shared state (Redis):</strong> All instances check the same store. Consistent but introduces a bottleneck and a SPOF.</li>
 <li><strong>Replicated state:</strong> Each instance replicates state to others. Consistency lag means brief windows where duplicates pass.</li>
 </ul>
@@ -777,6 +784,7 @@ Less memory = probabilistic dedup (Bloom filter)
 - Modify messages (transform)
 - Add messages to a dead letter queue (error handling)
 - Fail fatally (stop the pipeline)</p>
+<blockquote>GlassFlow implements this literally — their <code>Processor</code> interface has a single method <code>ProcessBatch(ctx, batch) batch</code>. When dedup is disabled, it slots in a <code>NoopProcessor</code> (null object pattern) rather than using nil checks or conditionals in the chain.</blockquote>
 <h3 id="62-the-two-phase-pattern">6.2 The Two-Phase Pattern</h3>
 <p>A critical design pattern for dedup in pipelines:</p>
 <p><strong>Phase 1: Read (FilterDuplicates)</strong>
@@ -820,6 +828,7 @@ Less memory = probabilistic dedup (Bloom filter)
 </li>
 </ol>
 <p>GlassFlow uses fail-closed: dedup errors return <code>FatalError</code>, messages are NAK'd for redelivery.</p>
+<blockquote>GlassFlow also tracks dedup metrics via OpenTelemetry — <code>dedup_filter</code> duration, <code>dedup_write</code> duration, and counts of duplicates found vs. messages passed. So even in fail-closed mode, operators have visibility into how often dedup is actually firing.</blockquote>
 <hr />
 <h2 id="7-how-glassflow-does-it">7. How GlassFlow Does It</h2>
 <h3 id="71-architecture">7.1 Architecture</h3>
@@ -897,12 +906,14 @@ What do you do when the dedup field (e.g., <code>"id"</code>) is missing from a 
 - Treat as error (drop or DLQ)
 - Use a hash of the full message as fallback
 The assignment doesn't specify. Your choice here shows judgment.</p>
+<blockquote>GlassFlow's choice is explicit in code — <code>if msgID == ""</code> the message always passes through <code>FilterDuplicates</code>. This is a deliberate data-availability-over-strictness decision.</blockquote>
 <p><strong>2. The field value is not a simple type.</strong>
 <code>{"id": {"nested": "object"}}</code> — deduplicating by <code>id</code> means stringifying a JSON object. Different serializations of the same object could produce different strings. Be explicit about how you normalize the key.</p>
 <p><strong>3. Numeric types in JSON.</strong>
 JSON has no integer type. <code>{"id": 1}</code> and <code>{"id": 1.0}</code> may parse differently depending on your JSON library. In Go, <code>json.Unmarshal</code> into <code>interface{}</code> turns all numbers into <code>float64</code>. So <code>1</code> becomes <code>1</code> as float64, which stringifies as <code>1</code> — consistent, but worth being aware of.</p>
 <p><strong>4. Concurrent access to the seen set.</strong>
 If you ever parallelize message processing (goroutines per line), the map needs synchronization (<code>sync.Mutex</code> or <code>sync.Map</code>). For a STDIN line-reader, this isn't needed — but mentioning it in NOTES.md shows awareness.</p>
+<blockquote>GlassFlow avoids this entirely by processing batches sequentially within a single goroutine per pod. Concurrency happens at the pod level (horizontal scaling), not the message level.</blockquote>
 <p><strong>5. Memory growth with permanent dedup.</strong>
 With no TTL and an unbounded stream, your map grows forever. In a 3-hour exercise, this is fine. In production, this is a memory leak. Mentioning this trade-off is important.</p>
 <p><strong>6. What "deduplication period" means for ordering.</strong>
